@@ -1,0 +1,128 @@
+services:
+  db:
+    image: postgres:13
+    container_name: postgres_db
+    environment:
+      POSTGRES_DB: mydatabase
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+    # volumes:
+    #   - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+  web:
+    build:
+      context: .
+    volumes:
+      - .:/app
+    expose:
+      - "8000"
+    ports:
+      - "8000:8000" 
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DEBUG=1  # Set to 0 in production
+      - DJANGO_SETTINGS_MODULE=trend.settings  
+      - BASE_REDIS_URI=redis://:rania.dev@redis:6379
+
+  nginx:
+    build:
+      context: ./nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - web
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    environment:
+      - REDIS_PASSWORD=rania.dev
+    command: redis-server --requirepass rania.dev
+
+  celery:
+    build:
+      context: .
+    command: celery -A trend worker --loglevel=info
+    depends_on:
+      - redis
+      - web
+    volumes:
+      - .:/app
+      - /tmp:/tmp 
+    environment:
+      # - CELERY_BROKER_URL=redis://:rania.dev@redis:6379/0
+      # - CELERY_RESULT_BACKEND=redis://:rania.dev@redis:6379/0
+      - BASE_REDIS_URI=redis://:rania.dev@redis:6379
+
+  # celery-beat:
+  #   build:
+  #     context: .
+  #   command: celery -A trend beat --loglevel=info
+  #   depends_on:
+  #     - redis
+  #     - web
+  #   volumes:
+  #     - .:/app
+  #     - /tmp:/tmp
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://:rania.dev@redis:6379/0
+  #     - CELERY_RESULT_BACKEND=redis://:rania.dev@redis:6379/0
+
+
+  # celery-worker-2:
+  #   build:
+  #     context: .
+  #   command: celery -A trend worker --loglevel=info
+  #   depends_on:
+  #     - redis
+  #   volumes:
+  #     - .:/app
+  #     - /tmp:/tmp
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://:rania.dev@redis:6379/0
+  #     - CELERY_RESULT_BACKEND=redis://:rania.dev@redis:6379/0
+  # celery-worker-3:
+  #   build:
+  #     context: .
+  #   command: celery -A trend worker --loglevel=info
+  #   depends_on:
+  #     - redis
+  #   volumes:
+  #     - .:/app
+  #     - /tmp:/tmp
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://:rania.dev@redis:6379/0
+  #     - CELERY_RESULT_BACKEND=redis://:rania.dev@redis:6379/0
+
+  minio_setup:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until (/usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin) do echo 'Waiting for minio...'; sleep 3; done;
+      /usr/bin/mc mb myminio/trend-bucket;
+      /usr/bin/mc policy set public myminio/my-bucket;
+      "
+    volumes:
+      - minio_data:/data
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"   # MinIO API port
+      - "9001:9001"   # MinIO Console port
+    environment:
+      MINIO_ROOT_USER: "minioadmin"
+      MINIO_ROOT_PASSWORD: "minioadmin"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
+volumes:
+  minio_data:
